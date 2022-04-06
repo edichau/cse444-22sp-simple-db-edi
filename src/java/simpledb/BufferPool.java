@@ -2,6 +2,7 @@ package simpledb;
 
 import java.io.*;
 
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -20,7 +21,13 @@ public class BufferPool {
     private static final int DEFAULT_PAGE_SIZE = 4096;
 
     private static int pageSize = DEFAULT_PAGE_SIZE;
-    
+
+    // The internal representation of the buffer pool
+    private final Map<PageId, Page> buffer;
+
+    // The maximum number of pages
+    private final int maxCapacity;
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -32,7 +39,8 @@ public class BufferPool {
      * @param numPages maximum number of pages in this buffer pool.
      */
     public BufferPool(int numPages) {
-        // some code goes here
+        buffer = new ConcurrentHashMap<>();
+        maxCapacity = numPages;
     }
     
     public static int getPageSize() {
@@ -66,8 +74,14 @@ public class BufferPool {
      */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        if (!buffer.containsKey(pid)) {
+            if (buffer.size() == maxCapacity) {
+                throw new DbException("Buffer at max capacity, unable to retrieve page");
+            }
+            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+            buffer.put(pid, page);
+        }
+        return buffer.get(pid);
     }
 
     /**
