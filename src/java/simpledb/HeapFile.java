@@ -19,6 +19,10 @@ public class HeapFile implements DbFile {
     private final TupleDesc td;
     private final int id;
 
+    // Fields for iterator to keep track of tuple
+    private Iterator<Tuple> itr;
+    private int pid;
+
     /**
      * Constructs a heap file backed by the specified file.
      * 
@@ -126,34 +130,21 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public DbFileIterator iterator(TransactionId tid) {
         return new DbFileIterator() {
-            private List<Iterator<Tuple>> pages;
-            private int currPID;
-            private boolean isOpen;
-
             @Override
             public void open() throws DbException, TransactionAbortedException {
-                // Sets up this iterator initializing the pid, and list of page iterators
-                currPID = 0;
-                pages = new ArrayList<>();
-
-                // Create a list of iterators from each page in this HeapFile
-                for (int i = 0; i < numPages(); i++) {
-                    PageId pid = new HeapPageId(getId(), i);
-                    pages.add(
-                        ((HeapPage) Database.getBufferPool().getPage(tid, pid, Permissions.READ_WRITE)).iterator()
-                    );
-                }
-                isOpen = true;
+                pid = 0;
+                itr = getItr(pid);
             }
 
             @Override
             public boolean hasNext() throws DbException, TransactionAbortedException {
-                if (!isOpen) return false;
+                if (itr == null) return false;
                 // Walk through the page iterators searching for the next Tuple
-                while (currPID < numPages() && !pages.get(currPID).hasNext()) {
-                    currPID++;
+                while (pid < numPages() - 1 && !itr.hasNext()) {
+                    pid++;
+                    itr = getItr(pid);
                 }
-                return currPID != numPages() && pages.get(currPID).hasNext();
+                return itr != null && itr.hasNext();
             }
 
             @Override
@@ -161,7 +152,7 @@ public class HeapFile implements DbFile {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
-                return pages.get(currPID).next();
+                return itr.next();
             }
 
             @Override
@@ -172,7 +163,13 @@ public class HeapFile implements DbFile {
 
             @Override
             public void close() {
-                isOpen = false;
+                itr = null;
+            }
+
+            private Iterator<Tuple> getItr(int pageNum) throws DbException, TransactionAbortedException{
+                return ((HeapPage) Database.getBufferPool()
+                        .getPage(tid, new HeapPageId(getId(), pageNum), Permissions.READ_WRITE))
+                        .iterator();
             }
         };
     }
