@@ -1,6 +1,8 @@
 package simpledb;
 
 import java.util.*;
+import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 /**
  * SeqScan is an implementation of a sequential scan access method that reads
@@ -10,6 +12,10 @@ import java.util.*;
 public class SeqScan implements OpIterator {
 
     private static final long serialVersionUID = 1L;
+
+    private final TransactionId tid;
+    private int tableid;
+    private String tableAlias;
 
     /**
      * Creates a sequential scan over the specified table as a part of the
@@ -28,7 +34,9 @@ public class SeqScan implements OpIterator {
      *            tableAlias.null, or null.null).
      */
     public SeqScan(TransactionId tid, int tableid, String tableAlias) {
-        // some code goes here
+        this.tid = tid;
+        this.tableid = tableid;
+        this.tableAlias = tableAlias;
     }
 
     /**
@@ -37,16 +45,14 @@ public class SeqScan implements OpIterator {
      *       be the actual name of the table in the catalog of the database
      * */
     public String getTableName() {
-        return null;
+        return Database.getCatalog().getTableName(tableid);
     }
 
     /**
      * @return Return the alias of the table this operator scans.
      * */
-    public String getAlias()
-    {
-        // some code goes here
-        return null;
+    public String getAlias() {
+        return tableAlias;
     }
 
     /**
@@ -62,7 +68,8 @@ public class SeqScan implements OpIterator {
      *            tableAlias.null, or null.null).
      */
     public void reset(int tableid, String tableAlias) {
-        // some code goes here
+        this.tableid = tableid;
+        this.tableAlias = tableAlias;
     }
 
     public SeqScan(TransactionId tid, int tableId) {
@@ -70,7 +77,7 @@ public class SeqScan implements OpIterator {
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        // some code goes here
+        Database.getCatalog().getDatabaseFile(tableid).iterator(tid).open();
     }
 
     /**
@@ -84,27 +91,37 @@ public class SeqScan implements OpIterator {
      *         prefixed with the tableAlias string from the constructor.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        TupleDesc tupleDesc = Database.getCatalog().getTupleDesc(tableid);
+
+        // Create streams over the indices of the tuple fields
+        Supplier<IntStream> stream = () -> IntStream.range(0, tupleDesc.numFields());
+
+        // Convert the streams into arrays with appended values for TupleDesc
+        String[] names = stream.get()
+                .mapToObj(i -> String.format("%s.%s", tableAlias, tupleDesc.getFieldName(i)))
+                .toArray(String[]::new);
+        Type[] types = stream.get()
+                .mapToObj(tupleDesc::getFieldType)
+                .toArray(Type[]::new);
+
+        return new TupleDesc(types, names);
     }
 
     public boolean hasNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return false;
+        return Database.getCatalog().getDatabaseFile(tableid).iterator(tid).hasNext();
     }
 
     public Tuple next() throws NoSuchElementException,
             TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        return Database.getCatalog().getDatabaseFile(tableid).iterator(tid).next();
     }
 
     public void close() {
-        // some code goes here
+        Database.getCatalog().getDatabaseFile(tableid).iterator(tid).close();
     }
 
     public void rewind() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        // some code goes here
+        Database.getCatalog().getDatabaseFile(tableid).iterator(tid).rewind();
     }
 }
