@@ -2,6 +2,10 @@ package simpledb;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * TupleDesc describes the schema of a tuple.
@@ -60,9 +64,10 @@ public class TupleDesc implements Serializable {
      *            be null.
      */
     public TupleDesc(Type[] typeAr, String[] fieldAr) {
-        for (int i = 0; i < typeAr.length; i++) {
-            items.add(new TDItem(typeAr[i], (i < fieldAr.length) ? fieldAr[i] : ""));
-        }
+        // Map type & name to a TDItem and store it in items
+        IntStream.range(0, typeAr.length)
+                .mapToObj(i -> new TDItem(typeAr[i], (i < fieldAr.length) ? fieldAr[i] : ""))
+                .forEachOrdered(items::add);
     }
 
     /**
@@ -74,9 +79,10 @@ public class TupleDesc implements Serializable {
      *            TupleDesc. It must contain at least one entry.
      */
     public TupleDesc(Type[] typeAr) {
-        for (Type type : typeAr) {
-            items.add(new TDItem(type, ""));
-        }
+        // Map each type to a TDItem without a name
+        Arrays.stream(typeAr)
+                .map(t -> new TDItem(t, ""))
+                .forEachOrdered(items::add);
     }
 
     /**
@@ -129,12 +135,11 @@ public class TupleDesc implements Serializable {
      *             if no field with a matching name is found.
      */
     public int fieldNameToIndex(String name) throws NoSuchElementException {
-        for (int i = 0; i < items.size(); i++) {
-           if (items.get(i).fieldName.equals(name)) {
-               return i;
-           }
-        }
-        throw new NoSuchElementException();
+        // Find the first index that matches the field name or throw exception
+        return IntStream.range(0, items.size())
+                .filter(i -> items.get(i).fieldName.equals(name))
+                .findFirst()
+                .orElseThrow(NoSuchElementException::new);
     }
 
     /**
@@ -156,18 +161,19 @@ public class TupleDesc implements Serializable {
      * @return the new TupleDesc
      */
     public static TupleDesc merge(TupleDesc td1, TupleDesc td2) {
-        String[] names = new String[td1.numFields() + td2.numFields()];
-        Type[] types = new Type[td1.numFields() + td2.numFields()];
+        // Generate IntStreams from 0 ... numFields
+        Function<TupleDesc, IntStream> str = v -> IntStream.range(0, v.numFields());
 
-        for (int i = 0; i < td1.numFields(); i++) {
-            names[i] = td1.getFieldName(i);
-            types[i] = td1.getFieldType(i);
-        }
+        // Stream over both td1 and td2 to concatenate their names and types
+        Type[] types = Stream.concat(
+                str.apply(td1).mapToObj(td1::getFieldType),
+                str.apply(td2).mapToObj(td2::getFieldType)
+        ).toArray(Type[]::new);
 
-        for (int i = 0; i < td2.items.size(); i++) {
-            names[i + td1.numFields()] = td2.getFieldName(i);
-            types[i + td1.numFields()] = td2.getFieldType(i);
-        }
+        String[] names = Stream.concat(
+                str.apply(td1).mapToObj(td1::getFieldName),
+                str.apply(td2).mapToObj(td2::getFieldName)
+        ).toArray(String[]::new);
 
         return new TupleDesc(types, names);
     }
@@ -220,10 +226,7 @@ public class TupleDesc implements Serializable {
      * @return String describing this descriptor.
      */
     public String toString() {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < items.size(); i++) {
-            builder.append(getFieldName(i)).append("(").append(getFieldName(i)).append(")");
-        }
-        return builder.toString();
+        // Convert items to strings and join them with ", "
+        return items.stream().map(TDItem::toString).collect(Collectors.joining(", "));
     }
 }

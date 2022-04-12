@@ -87,6 +87,9 @@ public class HeapFile implements DbFile {
 
             // Convert data back to HeapPage
             page = new HeapPage((HeapPageId) pid, data);
+
+            // Cleanup
+            read.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
