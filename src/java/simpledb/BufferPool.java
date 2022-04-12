@@ -74,6 +74,7 @@ public class BufferPool {
      */
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
+        // If buffer does not have page get it using the HeapFile
         if (!buffer.containsKey(pid)) {
             if (buffer.size() == maxCapacity) {
                 throw new DbException("Buffer at max capacity, unable to retrieve page");
