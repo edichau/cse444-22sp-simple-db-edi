@@ -1,11 +1,19 @@
 package simpledb;
+import java.util.*;
 
 /**
  * Knows how to compute some aggregate over a set of IntFields.
  */
 public class IntegerAggregator implements Aggregator {
 
+
     private static final long serialVersionUID = 1L;
+    private final int gbfield;
+    private final Type gbfieldtype;
+    private final int afield;
+    private final Op what;
+
+    private final HashMap<Field, Integer> map = new HashMap<>();
 
     /**
      * Aggregate constructor
@@ -23,7 +31,11 @@ public class IntegerAggregator implements Aggregator {
      */
 
     public IntegerAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
-        // some code goes here
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        this.what = what;
+
     }
 
     /**
@@ -46,9 +58,49 @@ public class IntegerAggregator implements Aggregator {
      *         the constructor.
      */
     public OpIterator iterator() {
-        // some code goes here
-        throw new
-        UnsupportedOperationException("please implement me for lab2");
-    }
+        return new OpIterator() {
+
+            Iterator<Integer> iterator;
+            TupleDesc tupleDesc;
+
+            @Override
+            public void open() throws DbException, TransactionAbortedException {
+                ArrayList<Integer> resultWrapper = new ArrayList<>();
+                resultWrapper.add(noGroupingResult);
+                iterator = resultWrapper.iterator();
+                tupleDesc = new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{what.toString()});
+            }
+
+            @Override
+            public boolean hasNext() throws DbException, TransactionAbortedException {
+                return iterator.hasNext();
+            }
+
+            @Override
+            public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return tuples.next();
+            }
+
+
+            @Override
+            public void rewind() throws DbException, TransactionAbortedException {
+                close();
+                open();
+            }
+
+            @Override
+            public TupleDesc getTupleDesc() {
+                return tupleDesc;
+            }
+
+            @Override
+            public void close() {
+                tupleDesc = null;
+                iterator = null;
+            }
+        };
 
 }

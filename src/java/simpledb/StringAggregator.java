@@ -1,4 +1,6 @@
 package simpledb;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Knows how to compute some aggregate over a set of StringFields.
@@ -6,6 +8,14 @@ package simpledb;
 public class StringAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
+    private final int gbfield;
+    private final Type gbfieldtype;
+    private final int afield;
+    private Map<Field, Integer> countPerGroup;
+    private boolean itOpen;
+    private Iterator<Tuple> tuples;
+    private TupleDesc tp;
+
 
     /**
      * Aggregate constructor
@@ -17,7 +27,11 @@ public class StringAggregator implements Aggregator {
      */
 
     public StringAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
-        // some code goes here
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        countPerGroup = new ConcurrentHashMap<>();
+
     }
 
     /**
@@ -25,7 +39,7 @@ public class StringAggregator implements Aggregator {
      * @param tup the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
-        // some code goes here
+        countPerGroup.merge((gbfield == NO_GROUPING) ? null : tup.getField(gbfield), 1, Integer::sum);
     }
 
     /**
@@ -37,8 +51,59 @@ public class StringAggregator implements Aggregator {
      *   aggregate specified in the constructor.
      */
     public OpIterator iterator() {
-        // some code goes here
-        throw new UnsupportedOperationException("please implement me for lab2");
+        return new OpIterator() {
+            @Override
+            public void open() throws DbException, TransactionAbortedException {
+                itOpen = true;
+                if (gbfield != NO_GROUPING) {
+                    tp = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{"groupValue", "aggregateVal"});
+                } else {
+                    tp = new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{"aggregateVal"});
+                }
+                tuples = countPerGroup.entrySet().stream().map(entry -> {
+                    Tuple tuple = new Tuple(tp);
+                    if (gbfield != NO_GROUPING) {
+                        tuple.setField(0, entry.getKey());
+                        tuple.setField(1, new IntField(entry.getValue()));
+                    } else {
+                        tuple.setField(0, new IntField(entry.getValue()));
+                    }
+                    return tuple;
+                }).iterator();
+            }
+
+            @Override
+            public boolean hasNext() throws DbException, TransactionAbortedException {
+                return itOpen && tuples.hasNext();
+            }
+
+            @Override
+            public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return tuples.next();
+            }
+
+            @Override
+            public void rewind() throws DbException, TransactionAbortedException {
+                boolean state = itOpen;
+                open();
+                itOpen = state;
+            }
+
+            @Override
+            public TupleDesc getTupleDesc() {
+                return tp;
+            }
+
+            @Override
+            public void close() {
+                itOpen = false;
+            }
+        };
     }
+
+}
 
 }
