@@ -1,11 +1,27 @@
 package simpledb;
 
+import java.util.Iterator;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
+
 /**
  * Knows how to compute some aggregate over a set of IntFields.
  */
 public class IntegerAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
+    private final int gbfield;
+    private final Type gbfieldtype;
+    private final int afield;
+    private final Op what;
+
+    private final Map<Field, Integer> aggregate;
+    private Map<Field, Integer> countPerGroup;
+    private boolean itOpen;
+    private Iterator<Tuple> tuples;
+    private TupleDesc tp;
 
     /**
      * Aggregate constructor
@@ -23,7 +39,12 @@ public class IntegerAggregator implements Aggregator {
      */
 
     public IntegerAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
-        // some code goes here
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        this.what = what;
+        aggregate = new ConcurrentHashMap<>();
+        countPerGroup = new ConcurrentHashMap<>();
     }
 
     /**
@@ -34,7 +55,26 @@ public class IntegerAggregator implements Aggregator {
      *            the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
-        // some code goes here
+        int toMerge = ((IntField) tup.getField(afield)).getValue();
+        Field key = (gbfield != NO_GROUPING) ? tup.getField(gbfield) : null;
+        countPerGroup.merge(key, 1, Integer::sum);
+        BiFunction<Integer, Integer, Integer> method;
+        switch (what) {
+            case MIN: method = Math::min; break;
+            case MAX: method = Math::max; break;
+            case SUM: method = Math::addExact; break;
+            case AVG:
+                int n = countPerGroup.get(key);
+                method = (integer, integer2) -> (integer * (n - 1) + integer2) / n;
+                break;
+            case COUNT:
+                aggregate.putIfAbsent(key, 0);
+                method = (integer, integer2) -> integer + 1;
+                break;
+            default: method = null;
+        }
+        assert method != null;
+        aggregate.merge(key, toMerge, method);
     }
 
     /**
@@ -46,9 +86,57 @@ public class IntegerAggregator implements Aggregator {
      *         the constructor.
      */
     public OpIterator iterator() {
-        // some code goes here
-        throw new
-        UnsupportedOperationException("please implement me for lab2");
+        return new OpIterator() {
+            @Override
+            public void open() throws DbException, TransactionAbortedException {
+                itOpen = true;
+                if (gbfield != NO_GROUPING) {
+                    tp = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{"groupValue", "aggregateVal"});
+                } else {
+                    tp = new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{"aggregateVal"});
+                }
+                tuples = aggregate.entrySet().stream().map(entry -> {
+                    Tuple tuple = new Tuple(tp);
+                    if (gbfield != NO_GROUPING) {
+                        tuple.setField(0, entry.getKey());
+                        tuple.setField(1, new IntField(entry.getValue()));
+                    } else {
+                        tuple.setField(0, new IntField(entry.getValue()));
+                    }
+                    return tuple;
+                }).iterator();
+            }
+
+            @Override
+            public boolean hasNext() throws DbException, TransactionAbortedException {
+                return itOpen && tuples.hasNext();
+            }
+
+            @Override
+            public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return tuples.next();
+            }
+
+            @Override
+            public void rewind() throws DbException, TransactionAbortedException {
+                boolean state = itOpen;
+                open();
+                itOpen = state;
+            }
+
+            @Override
+            public TupleDesc getTupleDesc() {
+                return tp;
+            }
+
+            @Override
+            public void close() {
+                itOpen = false;
+            }
+        };
     }
 
 }
