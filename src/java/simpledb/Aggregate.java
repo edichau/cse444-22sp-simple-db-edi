@@ -43,7 +43,7 @@ public class Aggregate extends Operator {
         this.gfield = gfield;
         this.aop = aop;
 
-        Type gfieldType = child.getTupleDesc().getFieldType(gfield);
+        Type gfieldType = (gfield != -1 ) ? child.getTupleDesc().getFieldType(gfield) : null;
         String aggFieldName = String.format("aggName(%s) (%s)", nameOfAggregatorOp(aop), child.getTupleDesc().getFieldName(afield));
 
         if (child.getTupleDesc().getFieldType(afield).equals(Type.INT_TYPE)) {

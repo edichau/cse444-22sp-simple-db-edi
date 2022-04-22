@@ -19,6 +19,7 @@ public class IntegerAggregator implements Aggregator {
 
     private final Map<Field, Integer> aggregate;
     private Map<Field, Integer> countPerGroup;
+    private Map<Field, Integer> sumPerGroup;
     private boolean itOpen;
     private Iterator<Tuple> tuples;
     private TupleDesc tp;
@@ -45,6 +46,7 @@ public class IntegerAggregator implements Aggregator {
         this.what = what;
         aggregate = new ConcurrentHashMap<>();
         countPerGroup = new ConcurrentHashMap<>();
+        sumPerGroup = new ConcurrentHashMap<>();
     }
 
     /**
@@ -56,16 +58,16 @@ public class IntegerAggregator implements Aggregator {
      */
     public void mergeTupleIntoGroup(Tuple tup) {
         int toMerge = ((IntField) tup.getField(afield)).getValue();
-        Field key = (gbfield != NO_GROUPING) ? tup.getField(gbfield) : null;
+        Field key = (gbfield != NO_GROUPING) ? tup.getField(gbfield) : new IntField(-1);
         countPerGroup.merge(key, 1, Integer::sum);
+        sumPerGroup.merge(key, toMerge, Integer::sum);
         BiFunction<Integer, Integer, Integer> method;
         switch (what) {
             case MIN: method = Math::min; break;
             case MAX: method = Math::max; break;
-            case SUM: method = Math::addExact; break;
+            case SUM: method = Integer::sum; break;
             case AVG:
-                int n = countPerGroup.get(key);
-                method = (integer, integer2) -> (integer * (n - 1) + integer2) / n;
+                method = (integer, integer2) -> sumPerGroup.get(key) / countPerGroup.get(key);
                 break;
             case COUNT:
                 aggregate.putIfAbsent(key, 0);
