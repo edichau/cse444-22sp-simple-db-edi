@@ -37,7 +37,6 @@ public class Aggregate extends Operator {
      *            The aggregation operator to use
      */
     public Aggregate(OpIterator child, int afield, int gfield, Aggregator.Op aop) {
-	// some code goes here
         this.child = child;
         this.afield = afield;
         this.gfield = gfield;
@@ -46,18 +45,18 @@ public class Aggregate extends Operator {
         Type gfieldType = (gfield != -1 ) ? child.getTupleDesc().getFieldType(gfield) : null;
         String aggFieldName = String.format("aggName(%s) (%s)", nameOfAggregatorOp(aop), child.getTupleDesc().getFieldName(afield));
 
+        // Set up the underlying aggregator depending on the given child's TupleDesc
         if (child.getTupleDesc().getFieldType(afield).equals(Type.INT_TYPE)) {
             agg = new IntegerAggregator(gfield, gfieldType, afield, aop);
-            tp = (gfield != -1)
+            tp = (gfield != Aggregator.NO_GROUPING)
                     ? new TupleDesc(new Type[]{gfieldType, Type.INT_TYPE}, new String[]{"groupValue", aggFieldName})
                     : new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{aggFieldName});
         } else {
             agg = new StringAggregator(gfield, gfieldType, afield, aop);
-            tp = (gfield != -1)
+            tp = (gfield != Aggregator.NO_GROUPING)
                     ? new TupleDesc(new Type[]{gfieldType, Type.INT_TYPE}, new String[]{"groupValue", aggFieldName})
                     : new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{aggFieldName});
         }
-
     }
 
     /**
@@ -123,11 +122,7 @@ public class Aggregate extends Operator {
      * aggregate. Should return null if there are no more tuples.
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        if (tuples.hasNext()) {
-            return tuples.next();
-        } else {
-            return null;
-        }
+        return (tuples.hasNext()) ? tuples.next() : null;
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
@@ -151,6 +146,7 @@ public class Aggregate extends Operator {
 
     public void close() {
         super.close();
+        child.close();
 	    tuples.close();
     }
 
