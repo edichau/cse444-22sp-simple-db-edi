@@ -106,4 +106,4 @@ public class StringAggregator implements Aggregator {
 
 }
 
-}
+
