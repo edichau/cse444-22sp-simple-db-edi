@@ -2,7 +2,6 @@ package simpledb;
 
 import java.io.*;
 
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -78,7 +77,7 @@ public class BufferPool {
         // If buffer does not have page get it using the HeapFile
         if (!buffer.containsKey(pid)) {
             if (buffer.size() == maxCapacity) {
-                throw new DbException("Buffer at max capacity, unable to retrieve page");
+                evictPage();
             }
             Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
             buffer.put(pid, page);
@@ -178,9 +177,9 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        // some code goes here
-        // not necessary for lab1
-
+        for (PageId pageId : buffer.keySet()) {
+            flushPage(pageId);
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -192,8 +191,7 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // some code goes here
-        // not necessary for lab1
+        buffer.remove(pid);
     }
 
     /**
@@ -201,8 +199,11 @@ public class BufferPool {
      * @param pid an ID indicating the page to flush
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        HeapPage page = (HeapPage) buffer.get(pid);
+        if (page.dirty) {
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
+            page.markDirty(false, null);
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -217,8 +218,14 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        // Get the first page in the buffer pool and remove it
+        PageId pageId = buffer.keySet().stream().findFirst().orElse(null);
+        try {
+            flushPage(pageId);
+            buffer.remove(pageId);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
 }
