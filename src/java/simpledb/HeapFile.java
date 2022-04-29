@@ -103,8 +103,22 @@ public class HeapFile implements DbFile {
 
     // see DbFile.java for javadocs
     public void writePage(Page page) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        try {
+            // Setup file for writing and page data to store
+            int pageSize = BufferPool.getPageSize();
+            RandomAccessFile write = new RandomAccessFile(getFile(), "rw");
+            byte[] pageData = page.getPageData();
+
+            // Write to the offset of the specific page
+            write.seek((long) pageSize * page.getId().getPageNumber());
+            write.write(pageData);
+
+            // Cleanup
+            write.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new IOException();
+        }
     }
 
     /**
@@ -117,9 +131,31 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+        int pgNo;
+        HeapPage page = null;
+        for (pgNo = 0; pgNo < numPages(); pgNo++) {
+           page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pgNo), Permissions.READ_WRITE);
+           if (page.getNumEmptySlots() > 0) {
+               break;
+           }
+        }
+
+        if (pgNo == numPages()) {
+            try {
+                FileOutputStream fw = new FileOutputStream(getFile(), true);
+                fw.write(new HeapPage(new HeapPageId(getId(), numPages()), new byte[BufferPool.getPageSize()]).getPageData());
+                fw.close();
+                page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pgNo), Permissions.READ_WRITE);
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw new IOException("Error reading or writing file");
+            }
+        }
+
+        assert page != null;
+        page.insertTuple(t);
+
+        return new ArrayList<>(List.of(page));
     }
 
     // see DbFile.java for javadocs
