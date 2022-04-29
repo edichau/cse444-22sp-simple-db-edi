@@ -19,6 +19,7 @@ public class IntegerAggregator implements Aggregator {
     private final Map<Field, Integer> aggregate;
     private final Map<Field, Integer> groupCounts;
     private final Map<Field, Integer> groupSums;
+    private String gbfieldName;
     private boolean itOpen;
     private Iterator<Tuple> tuples;
     private TupleDesc tp;
@@ -57,6 +58,9 @@ public class IntegerAggregator implements Aggregator {
      *            the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
+	if (gbfield != NO_GROUPING && gbfieldName == null) {
+            gbfieldName = tup.getTupleDesc().getFieldName(gbfield);
+	}
         // Get the grouping key or a dummy one
         Field key = (gbfield != NO_GROUPING) ? tup.getField(gbfield) : new IntField(-1);
         int toMerge = ((IntField) tup.getField(afield)).getValue();
@@ -98,7 +102,7 @@ public class IntegerAggregator implements Aggregator {
                 boolean grouping = gbfield != NO_GROUPING;
                 // Set up our TupleDesc depending on whether we are grouped or not
                 if (grouping) {
-                    tp = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{"groupValue", "aggregateVal"});
+                    tp = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{gbfieldName, "aggregateVal"});
                 } else {
                     tp = new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{"aggregateVal"});
                 }

@@ -15,6 +15,7 @@ public class StringAggregator implements Aggregator {
     private final Type gbfieldtype;
     private final int afield;
     private Map<Field, Integer> countPerGroup;
+    private String gbfieldName;
     private boolean itOpen;
     private Iterator<Tuple> tuples;
     private TupleDesc tp;
@@ -44,6 +45,9 @@ public class StringAggregator implements Aggregator {
      * @param tup the Tuple containing an aggregate field and a group-by field
      */
     public void mergeTupleIntoGroup(Tuple tup) {
+	if (gbfield != NO_GROUPING && gbfieldName == null) {
+            gbfieldName = tup.getTupleDesc().getFieldName(gbfield);
+	}
         countPerGroup.merge((gbfield == NO_GROUPING) ? null : tup.getField(gbfield), 1, Integer::sum);
     }
 
@@ -61,7 +65,7 @@ public class StringAggregator implements Aggregator {
             public void open() throws DbException, TransactionAbortedException {
                 itOpen = true;
                 if (gbfield != NO_GROUPING) {
-                    tp = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{"groupValue", "aggregateVal"});
+                    tp = new TupleDesc(new Type[]{gbfieldtype, Type.INT_TYPE}, new String[]{gbfieldName, "aggregateVal"});
                 } else {
                     tp = new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{"aggregateVal"});
                 }

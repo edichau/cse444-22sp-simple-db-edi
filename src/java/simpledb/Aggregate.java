@@ -42,8 +42,8 @@ public class Aggregate extends Operator {
         this.gfield = gfield;
         this.aop = aop;
 
-        Type gFieldType = (gfield != -1 ) ? child.getTupleDesc().getFieldType(gfield) : null;
-        String gFieldName = (gfield != -1 ) ? child.getTupleDesc().getFieldName(gfield) : null;
+        Type gFieldType = (gfield != -1) ? child.getTupleDesc().getFieldType(gfield) : null;
+        String gFieldName = (gfield != -1) ? child.getTupleDesc().getFieldName(gfield) : null;
         String aggFieldName = String.format("aggName(%s) (%s)", nameOfAggregatorOp(aop), child.getTupleDesc().getFieldName(afield));
 
         // Set up the underlying aggregator depending on the given child's TupleDesc
@@ -75,7 +75,7 @@ public class Aggregate extends Operator {
      *         null;
      * */
     public String groupFieldName() {
-        return child.getTupleDesc().getFieldName(gfield);
+        return (gfield != -1) ? child.getTupleDesc().getFieldName(gfield) : null;
     }
 
     /**
