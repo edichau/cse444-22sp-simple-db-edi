@@ -1,5 +1,7 @@
 package simpledb;
 
+import java.io.IOException;
+
 /**
  * Inserts tuples read from the child operator into the tableId specified in the
  * constructor
@@ -7,6 +9,11 @@ package simpledb;
 public class Insert extends Operator {
 
     private static final long serialVersionUID = 1L;
+
+    private final TransactionId transactionId;
+    private OpIterator child;
+    private final int tableId;
+    private boolean gotNext;
 
     /**
      * Constructor.
@@ -23,24 +30,31 @@ public class Insert extends Operator {
      */
     public Insert(TransactionId t, OpIterator child, int tableId)
             throws DbException {
-        // some code goes here
+        if (!child.getTupleDesc().equals(Database.getCatalog().getDatabaseFile(tableId).getTupleDesc())) {
+            throw new DbException("TupleDesc do not match");
+        }
+        this.transactionId = t;
+        this.child = child;
+        this.tableId = tableId;
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return new TupleDesc(new Type[]{Type.INT_TYPE});
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        // some code goes here
+        super.open();
+        child.open();
     }
 
     public void close() {
-        // some code goes here
+        super.close();
+        child.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.close();
+        this.open();
     }
 
     /**
@@ -57,18 +71,36 @@ public class Insert extends Operator {
      * @see BufferPool#insertTuple
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        if (gotNext) return null;
+        int count = 0;
+
+        // Walk through the child and add all the tuples to the BufferPool
+        while (child.hasNext()) {
+            try {
+                Database.getBufferPool().insertTuple(transactionId, tableId, child.next());
+                count++;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        // Prevents getting called more than once
+        gotNext = true;
+
+        // Create a new single field tuple with number of tuples copied over
+        Tuple tuple = new Tuple(getTupleDesc());
+        tuple.setField(0, new IntField(count));
+
+        return tuple;
     }
 
     @Override
     public OpIterator[] getChildren() {
-        // some code goes here
-        return null;
+        return new OpIterator[]{child};
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
-        // some code goes here
+        this.child = children[0];
     }
 }

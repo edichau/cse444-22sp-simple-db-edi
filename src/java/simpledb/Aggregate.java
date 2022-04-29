@@ -42,19 +42,20 @@ public class Aggregate extends Operator {
         this.gfield = gfield;
         this.aop = aop;
 
-        Type gfieldType = (gfield != -1 ) ? child.getTupleDesc().getFieldType(gfield) : null;
+        Type gFieldType = (gfield != -1) ? child.getTupleDesc().getFieldType(gfield) : null;
+        String gFieldName = (gfield != -1) ? child.getTupleDesc().getFieldName(gfield) : null;
         String aggFieldName = String.format("aggName(%s) (%s)", nameOfAggregatorOp(aop), child.getTupleDesc().getFieldName(afield));
 
         // Set up the underlying aggregator depending on the given child's TupleDesc
         if (child.getTupleDesc().getFieldType(afield).equals(Type.INT_TYPE)) {
-            agg = new IntegerAggregator(gfield, gfieldType, afield, aop);
+            agg = new IntegerAggregator(gfield, gFieldType, afield, aop);
             tp = (gfield != Aggregator.NO_GROUPING)
-                    ? new TupleDesc(new Type[]{gfieldType, Type.INT_TYPE}, new String[]{"groupValue", aggFieldName})
+                    ? new TupleDesc(new Type[]{gFieldType, Type.INT_TYPE}, new String[]{gFieldName, aggFieldName})
                     : new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{aggFieldName});
         } else {
-            agg = new StringAggregator(gfield, gfieldType, afield, aop);
+            agg = new StringAggregator(gfield, gFieldType, afield, aop);
             tp = (gfield != Aggregator.NO_GROUPING)
-                    ? new TupleDesc(new Type[]{gfieldType, Type.INT_TYPE}, new String[]{"groupValue", aggFieldName})
+                    ? new TupleDesc(new Type[]{gFieldType, Type.INT_TYPE}, new String[]{gFieldName, aggFieldName})
                     : new TupleDesc(new Type[]{Type.INT_TYPE}, new String[]{aggFieldName});
         }
     }
@@ -74,7 +75,7 @@ public class Aggregate extends Operator {
      *         null;
      * */
     public String groupFieldName() {
-        return child.getTupleDesc().getFieldName(gfield);
+        return (gfield != -1) ? child.getTupleDesc().getFieldName(gfield) : null;
     }
 
     /**
