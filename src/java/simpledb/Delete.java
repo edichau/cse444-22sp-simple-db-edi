@@ -9,6 +9,9 @@ import java.io.IOException;
 public class Delete extends Operator {
 
     private static final long serialVersionUID = 1L;
+    private TransactionId transactionId;
+    private OpIterator child;
+    private boolean gotNext;
 
     /**
      * Constructor specifying the transaction that this delete belongs to as
@@ -20,24 +23,27 @@ public class Delete extends Operator {
      *            The child operator from which to read tuples for deletion
      */
     public Delete(TransactionId t, OpIterator child) {
-        // some code goes here
+        this.transactionId = t;
+        this.child = child;
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return new TupleDesc(new Type[]{Type.INT_TYPE});
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        // some code goes here
+        super.open();
+        child.open();
     }
 
     public void close() {
-        // some code goes here
+        super.close();
+        child.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        this.close();
+        this.open();
     }
 
     /**
@@ -50,19 +56,37 @@ public class Delete extends Operator {
      * @see BufferPool#deleteTuple
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        if (gotNext) return null;
+        int count = 0;
+
+        // Walk through the child and add all the tuples to the BufferPool
+        while (child.hasNext()) {
+            try {
+                Tuple t = child.next();
+                Database.getBufferPool().deleteTuple(transactionId, t);
+                count++;
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        // Prevents getting called more than once
+        gotNext = true;
+
+        // Create a new single field tuple with number of tuples copied over
+        Tuple tuple = new Tuple(getTupleDesc());
+        tuple.setField(0, new IntField(count));
+
+        return tuple;
     }
 
     @Override
     public OpIterator[] getChildren() {
-        // some code goes here
-        return null;
+        return new OpIterator[]{child};
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
-        // some code goes here
+        this.child = children[0];
     }
-
 }
