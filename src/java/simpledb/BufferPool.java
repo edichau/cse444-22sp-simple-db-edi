@@ -29,6 +29,9 @@ public class BufferPool {
     // The maximum number of pages
     private final int maxCapacity;
 
+    // Manager for the page locks by transactions
+    private final LockManager lockManager;
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -42,6 +45,7 @@ public class BufferPool {
     public BufferPool(int numPages) {
         buffer = new ConcurrentHashMap<>();
         maxCapacity = numPages;
+        lockManager = new LockManager();
     }
     
     public static int getPageSize() {
@@ -73,8 +77,19 @@ public class BufferPool {
      * @param pid the ID of the requested page
      * @param perm the requested permissions on the page
      */
-    public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
+    public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
+
+        // Waits until it can acquire the page before proceeding
+        getHolders().putIfAbsent(pid, new LockManager.LockSet());
+        while (!getHolders().get(pid).acquire(tid, perm)) {
+            try {
+                wait();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
         // If buffer does not have page get it using the HeapFile
         if (!buffer.containsKey(pid)) {
             if (buffer.size() == maxCapacity) {
@@ -95,9 +110,9 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param pid the ID of the page to unlock
      */
-    public  void releasePage(TransactionId tid, PageId pid) {
-        // some code goes here
-        // not necessary for lab1|lab2
+    public synchronized void releasePage(TransactionId tid, PageId pid) {
+        getHolders().getOrDefault(pid, new LockManager.LockSet()).release(tid);
+        notifyAll();
     }
 
     /**
@@ -105,16 +120,18 @@ public class BufferPool {
      *
      * @param tid the ID of the transaction requesting the unlock
      */
-    public void transactionComplete(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+    public synchronized void transactionComplete(TransactionId tid) throws IOException {
+        lockManager.clearTransaction(tid);
+        notifyAll();
+    }
+
+    private Map<PageId, LockManager.LockSet> getHolders() {
+        return lockManager.getLocks();
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
-    public boolean holdsLock(TransactionId tid, PageId p) {
-        // some code goes here
-        // not necessary for lab1|lab2
-        return false;
+    public synchronized boolean holdsLock(TransactionId tid, PageId p) {
+        return getHolders().containsKey(p) && getHolders().get(p).hasLock(tid);
     }
 
     /**
@@ -124,10 +141,11 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param commit a flag indicating whether we should commit or abort
      */
-    public void transactionComplete(TransactionId tid, boolean commit)
+    public synchronized void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        // TODO: Handle abort/commit
+        lockManager.clearTransaction(tid);
+        notifyAll();
     }
 
     /**
