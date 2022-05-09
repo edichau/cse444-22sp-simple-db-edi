@@ -147,7 +147,9 @@ public class BufferPool {
             flushPages(tid);
         } else {
             for (PageId pid : lockManager.getTransactionPages(tid)) {
-                HeapPage page = (HeapPage) Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+                HeapPage page = (HeapPage) Database.getCatalog()
+                        .getDatabaseFile(pid.getTableId())
+                        .readPage(pid);
                 page.markDirty(false, tid);
                 buffer.put(pid, page);
             }
@@ -234,7 +236,7 @@ public class BufferPool {
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
         HeapPage page = (HeapPage) buffer.get(pid);
-        if (page.dirty) {
+        if (page != null && page.dirty) {
             Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
             page.markDirty(false, null);
         }

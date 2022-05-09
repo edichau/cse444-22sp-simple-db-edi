@@ -1,6 +1,5 @@
 package simpledb;
 
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,7 +27,7 @@ public class LockManager {
         return getLocks().entrySet().stream()
                 .filter(e -> e.getValue().hasLock(tid))
                 .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
+                .collect(Collectors.toCollection(ConcurrentHashMap::newKeySet));
     }
 
     /**
@@ -40,7 +39,7 @@ public class LockManager {
 
         public LockSet() {
             shared = true;
-            this.holders = new HashSet<>();
+            holders = ConcurrentHashMap.newKeySet();
         }
 
         public synchronized boolean acquire(TransactionId tid, Permissions perm) {
