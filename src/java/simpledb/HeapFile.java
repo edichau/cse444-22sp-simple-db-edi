@@ -207,7 +207,7 @@ public class HeapFile implements DbFile {
 
             private Iterator<Tuple> getItr(int pageNum) throws DbException, TransactionAbortedException{
                 return ((HeapPage) Database.getBufferPool()
-                        .getPage(tid, new HeapPageId(getId(), pageNum), Permissions.READ_WRITE))
+                        .getPage(tid, new HeapPageId(getId(), pageNum), Permissions.READ_ONLY))
                         .iterator();
             }
         };
