@@ -4,6 +4,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import static simpledb.Permissions.READ_WRITE;
 import static simpledb.Permissions.READ_ONLY;
@@ -21,6 +22,13 @@ public class LockManager {
 
     public void clearTransaction(TransactionId tid) {
         getLocks().forEach((k, v) -> v.release(tid));
+    }
+
+    public Set<PageId> getTransactionPages(TransactionId tid) {
+        return getLocks().entrySet().stream()
+                .filter(e -> e.getValue().hasLock(tid))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
     }
 
     /**
