@@ -5,6 +5,7 @@ import java.io.*;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -121,8 +122,7 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      */
     public synchronized void transactionComplete(TransactionId tid) throws IOException {
-        lockManager.clearTransaction(tid);
-        notifyAll();
+        transactionComplete(tid, true);
     }
 
     private Map<PageId, LockManager.LockSet> getHolders() {
@@ -143,7 +143,15 @@ public class BufferPool {
      */
     public synchronized void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        // TODO: Handle abort/commit
+        if (commit){
+            flushPages(tid);
+        } else {
+            for (PageId pid : lockManager.getTransactionPages(tid)) {
+                HeapPage page = (HeapPage) Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+                page.markDirty(false, tid);
+                buffer.put(pid, page);
+            }
+        }
         lockManager.clearTransaction(tid);
         notifyAll();
     }
@@ -235,8 +243,9 @@ public class BufferPool {
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized  void flushPages(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        for (PageId pageId : lockManager.getTransactionPages(tid)) {
+            flushPage(pageId);
+        }
     }
 
     /**
@@ -244,8 +253,17 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        // Get the first page in the buffer pool and remove it
-        PageId pageId = buffer.keySet().stream().findFirst().orElse(null);
+        // Exception if there are no clean pages in the buffer pool
+        Supplier<DbException> exception = () -> new DbException("No clean pages to evict");
+
+        // Get the first clean page in the buffer pool
+        PageId pageId = buffer.entrySet().stream()
+                .filter(e -> !((HeapPage) e.getValue()).dirty)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(exception);
+
+        // Attempt to remove the found page from the buffer pool
         try {
             flushPage(pageId);
             buffer.remove(pageId);
