@@ -2,8 +2,7 @@ package simpledb;
 
 import java.io.*;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -33,6 +32,9 @@ public class BufferPool {
     // Manager for the page locks by transactions
     private final LockManager lockManager;
 
+    // Dependency graph for cycle detection
+    private final Map<TransactionId, Set<TransactionId>> deps;
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -47,6 +49,7 @@ public class BufferPool {
         buffer = new ConcurrentHashMap<>();
         maxCapacity = numPages;
         lockManager = new LockManager();
+        deps = new ConcurrentHashMap<>();
     }
     
     public static int getPageSize() {
@@ -81,6 +84,22 @@ public class BufferPool {
     public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
 
+        LockManager.LockSet lockSet = getHolders().getOrDefault(pid, new LockManager.LockSet());
+        Set<TransactionId> holders = deps.getOrDefault(tid, ConcurrentHashMap.newKeySet());
+
+        for (TransactionId t : lockSet.holders) {
+            if (!t.equals(tid)) {
+                holders.add(t);
+            }
+        }
+
+        deps.put(tid, holders);
+
+        // Cycle detection similar to https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
+        if (cyclic(deps)) {
+            throw new TransactionAbortedException();
+        }
+
         // Waits until it can acquire the page before proceeding
         getHolders().putIfAbsent(pid, new LockManager.LockSet());
         while (!getHolders().get(pid).acquire(tid, perm)) {
@@ -100,6 +119,42 @@ public class BufferPool {
             buffer.put(pid, page);
         }
         return buffer.get(pid);
+    }
+
+    private boolean cyclic(Map<TransactionId, Set<TransactionId>> deps) {
+        Map<TransactionId, Boolean> visited = new ConcurrentHashMap<>();
+        Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
+
+        for (TransactionId transactionId : deps.keySet()) {
+            if (dfs(transactionId, visited, recursion)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean dfs(TransactionId tid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+        if (rec.getOrDefault(tid, false)) {
+            return true;
+        }
+
+        if (vis.getOrDefault(tid, false)) {
+            return false;
+        }
+
+        vis.put(tid, true);
+        rec.put(tid, true);
+
+        for (TransactionId t : deps.get(tid)) {
+            if (dfs(t, vis, rec)) {
+                return true;
+            }
+        }
+
+        rec.put(tid, false);
+
+        return false;
     }
 
     /**
@@ -155,6 +210,8 @@ public class BufferPool {
             }
         }
         lockManager.clearTransaction(tid);
+        deps.remove(tid);
+        deps.forEach((k, v) -> v.remove(tid));
         notifyAll();
     }
 
