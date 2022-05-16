@@ -81,6 +81,10 @@ public class BufferPool {
     public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
 
+        if (lockManager.wouldDeadlock(tid, pid, perm)) {
+            throw new TransactionAbortedException();
+        }
+
         // Waits until it can acquire the page before proceeding
         getHolders().putIfAbsent(pid, new LockManager.LockSet());
         while (!getHolders().get(pid).acquire(tid, perm)) {

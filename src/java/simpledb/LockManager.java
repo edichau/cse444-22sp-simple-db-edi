@@ -30,6 +30,57 @@ public class LockManager {
                 .collect(Collectors.toCollection(ConcurrentHashMap::newKeySet));
     }
 
+    public boolean wouldDeadlock(TransactionId tid, PageId pid, Permissions permissions) {
+        // Adapted from: https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
+        Map<TransactionId, Boolean> visited = new ConcurrentHashMap<>();
+        Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
+
+        LockSet lockSet = locks.getOrDefault(pid, new LockSet());
+        lockSet.acquire(tid, permissions);
+
+        Set<TransactionId> iterate = ConcurrentHashMap.newKeySet();
+
+        for (TransactionId t : lockSet.holders) {
+            if (!t.equals(tid)) {
+                iterate.add(t);
+            }
+        }
+
+        for (TransactionId transactionId : iterate) {
+            if (deadlockHelper(transactionId, visited, recursion)) {
+                locks.get(pid).release(tid);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean deadlockHelper(TransactionId tid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+        if (rec.getOrDefault(tid, false)) {
+            return true;
+        }
+
+        if (vis.getOrDefault(tid, false)) {
+            return false;
+        }
+
+        vis.put(tid, true);
+        rec.put(tid, true);
+
+        for (PageId p : getTransactionPages(tid)) {
+            for (TransactionId transactionId : locks.getOrDefault(p, new LockSet()).holders) {
+                if (deadlockHelper(transactionId, vis, rec)) {
+                    return true;
+                }
+            }
+        }
+
+        rec.put(tid, false);
+
+        return false;
+    }
+
     /**
      * A wrapper for HashSet that can be acquired and release in a shared or exclusive fashion
      */
