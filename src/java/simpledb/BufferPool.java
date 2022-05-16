@@ -2,10 +2,33 @@ package simpledb;
 
 import java.io.*;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+class PageLock{
+    //Lock Type
+    public static final int SHARE = 0;
+    public static final int EXCLUSIVE = 1;
+    private TransactionId tid;
+    private int type;
+
+    public PageLock(TransactionId tid, int type) {
+        this.tid = tid;
+        this.type = type;
+    }
+
+    public TransactionId getTid() {
+        return this.tid;
+    }
+
+    public int getType() {
+        return this.type;
+    }
+
+    public void setType(int type) {
+        this.type = type;
+    }
+}
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -15,7 +38,7 @@ import java.util.function.Supplier;
  * The BufferPool is also responsible for locking;  when a transaction fetches
  * a page, BufferPool checks that the transaction has the appropriate
  * locks to read/write the page.
- * 
+ *
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
@@ -48,16 +71,16 @@ public class BufferPool {
         maxCapacity = numPages;
         lockManager = new LockManager();
     }
-    
+
     public static int getPageSize() {
       return pageSize;
     }
-    
+
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void setPageSize(int pageSize) {
     	BufferPool.pageSize = pageSize;
     }
-    
+
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void resetPageSize() {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
@@ -79,19 +102,21 @@ public class BufferPool {
      * @param perm the requested permissions on the page
      */
     public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
-        throws TransactionAbortedException, DbException {
-
-        // Waits until it can acquire the page before proceeding
+            throws TransactionAbortedException, DbException {
+        boolean lockAcquired = false;
+        long start = System.currentTimeMillis();
+        long timeout = new Random().nextInt(2000) + 2000;
         getHolders().putIfAbsent(pid, new LockManager.LockSet());
-        while (!getHolders().get(pid).acquire(tid, perm)) {
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+        while (!lockAcquired) {
+
+            long now = System.currentTimeMillis();
+            if ( now - start > timeout )
+                throw new TransactionAbortedException();
+            lockAcquired = getHolders().get(pid).acquire(tid, pid, perm);
         }
 
         // If buffer does not have page get it using the HeapFile
+
         if (!buffer.containsKey(pid)) {
             if (buffer.size() == maxCapacity) {
                 evictPage();
@@ -100,6 +125,7 @@ public class BufferPool {
             buffer.put(pid, page);
         }
         return buffer.get(pid);
+
     }
 
     /**
@@ -160,14 +186,14 @@ public class BufferPool {
 
     /**
      * Add a tuple to the specified table on behalf of transaction tid.  Will
-     * acquire a write lock on the page the tuple is added to and any other 
-     * pages that are updated (Lock acquisition is not needed for lab2). 
+     * acquire a write lock on the page the tuple is added to and any other
+     * pages that are updated (Lock acquisition is not needed for lab2).
      * May block if the lock(s) cannot be acquired.
-     * 
+     *
      * Marks any pages that were dirtied by the operation as dirty by calling
-     * their markDirty bit, and adds versions of any pages that have 
-     * been dirtied to the cache (replacing any existing versions of those pages) so 
-     * that future requests see up-to-date pages. 
+     * their markDirty bit, and adds versions of any pages that have
+     * been dirtied to the cache (replacing any existing versions of those pages) so
+     * that future requests see up-to-date pages.
      *
      * @param tid the transaction adding the tuple
      * @param tableId the table to add the tuple to
@@ -189,9 +215,9 @@ public class BufferPool {
      * other pages that are updated. May block if the lock(s) cannot be acquired.
      *
      * Marks any pages that were dirtied by the operation as dirty by calling
-     * their markDirty bit, and adds versions of any pages that have 
-     * been dirtied to the cache (replacing any existing versions of those pages) so 
-     * that future requests see up-to-date pages. 
+     * their markDirty bit, and adds versions of any pages that have
+     * been dirtied to the cache (replacing any existing versions of those pages) so
+     * that future requests see up-to-date pages.
      *
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
@@ -222,7 +248,7 @@ public class BufferPool {
         Needed by the recovery manager to ensure that the
         buffer pool doesn't keep a rolled back page in its
         cache.
-        
+
         Also used by B+ tree files to ensure that deleted pages
         are removed from the cache so they can be reused safely
     */
