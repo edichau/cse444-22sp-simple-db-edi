@@ -112,7 +112,7 @@ public class BufferPool {
             long now = System.currentTimeMillis();
             if ( now - start > timeout )
                 throw new TransactionAbortedException();
-            lockAcquired = getHolders().get(pid).acquire(tid, pid, perm);
+            lockAcquired = getHolders().get(pid).acquire(tid, perm);
         }
 
         // If buffer does not have page get it using the HeapFile
