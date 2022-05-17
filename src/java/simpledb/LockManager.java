@@ -36,9 +36,7 @@ public class LockManager {
         Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
 
         LockSet lockSet = locks.getOrDefault(pid, new LockSet());
-        if (!lockSet.acquire(tid, permissions)) {
-            return false;
-        }
+        lockSet.acquire(tid, permissions);
 
         Set<TransactionId> iterate = ConcurrentHashMap.newKeySet();
         iterate.addAll(lockSet.holders);
