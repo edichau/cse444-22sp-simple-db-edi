@@ -86,29 +86,26 @@ public class BufferPool {
 
         LockManager.LockSet lockSet = getHolders().getOrDefault(pid, new LockManager.LockSet());
         Set<TransactionId> holders = deps.getOrDefault(tid, ConcurrentHashMap.newKeySet());
-
-        for (TransactionId t : lockSet.holders) {
-            if (!t.equals(tid)) {
-                holders.add(t);
-            }
-        }
+        holders.addAll(lockSet.holders);
 
         deps.put(tid, holders);
-
-        // Cycle detection similar to https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
-        if (cyclic(deps)) {
-            throw new TransactionAbortedException();
-        }
 
         // Waits until it can acquire the page before proceeding
         getHolders().putIfAbsent(pid, new LockManager.LockSet());
         while (!getHolders().get(pid).acquire(tid, perm)) {
             try {
+                // Cycle detection similar to https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
+                if (cyclic(deps)) {
+                    deps.remove(tid);
+                    throw new TransactionAbortedException();
+                }
                 wait();
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
         }
+
+        deps.remove(tid);
 
         // If buffer does not have page get it using the HeapFile
         if (!buffer.containsKey(pid)) {
@@ -121,7 +118,7 @@ public class BufferPool {
         return buffer.get(pid);
     }
 
-    private boolean cyclic(Map<TransactionId, Set<TransactionId>> deps) {
+    private synchronized boolean cyclic(Map<TransactionId, Set<TransactionId>> deps) {
         Map<TransactionId, Boolean> visited = new ConcurrentHashMap<>();
         Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
 
@@ -134,7 +131,7 @@ public class BufferPool {
         return false;
     }
 
-    private boolean dfs(TransactionId tid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+    private synchronized boolean dfs(TransactionId tid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
         if (rec.getOrDefault(tid, false)) {
             return true;
         }
@@ -146,7 +143,7 @@ public class BufferPool {
         vis.put(tid, true);
         rec.put(tid, true);
 
-        for (TransactionId t : deps.get(tid)) {
+        for (TransactionId t : deps.getOrDefault(tid, ConcurrentHashMap.newKeySet())) {
             if (dfs(t, vis, rec)) {
                 return true;
             }
@@ -180,7 +177,7 @@ public class BufferPool {
         transactionComplete(tid, true);
     }
 
-    private Map<PageId, LockManager.LockSet> getHolders() {
+    private synchronized Map<PageId, LockManager.LockSet> getHolders() {
         return lockManager.getLocks();
     }
 
@@ -230,7 +227,7 @@ public class BufferPool {
      * @param tableId the table to add the tuple to
      * @param t the tuple to add
      */
-    public void insertTuple(TransactionId tid, int tableId, Tuple t)
+    public synchronized void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         List<Page> dirtyPages = dbFile.insertTuple(tid, t);
@@ -253,7 +250,7 @@ public class BufferPool {
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
      */
-    public  void deleteTuple(TransactionId tid, Tuple t)
+    public synchronized void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         int tableId = t.getRecordId().getPageId().getTableId();
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
