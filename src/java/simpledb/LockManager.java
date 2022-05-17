@@ -15,15 +15,15 @@ public class LockManager {
         this.locks = new ConcurrentHashMap<>();
     }
 
-    public Map<PageId, LockSet> getLocks() {
+    public synchronized Map<PageId, LockSet> getLocks() {
         return locks;
     }
 
-    public void clearTransaction(TransactionId tid) {
+    public synchronized void clearTransaction(TransactionId tid) {
         getLocks().forEach((k, v) -> v.release(tid));
     }
 
-    public Set<PageId> getTransactionPages(TransactionId tid) {
+    public synchronized Set<PageId> getTransactionPages(TransactionId tid) {
         return getLocks().entrySet().stream()
                 .filter(e -> e.getValue().hasLock(tid))
                 .map(Map.Entry::getKey)
@@ -69,11 +69,11 @@ public class LockManager {
             return holders.remove(tid);
         }
 
-        public boolean hasLock(TransactionId tid) {
+        public synchronized boolean hasLock(TransactionId tid) {
            return holders.contains(tid);
         }
 
-        public boolean notHeld() {
+        public synchronized boolean notHeld() {
             return holders.isEmpty();
         }
     }
