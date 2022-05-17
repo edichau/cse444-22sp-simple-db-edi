@@ -19,35 +19,33 @@ public class LockManager {
         return locks;
     }
 
-    public void clearTransaction(TransactionId tid) {
+    public synchronized void clearTransaction(TransactionId tid) {
         getLocks().forEach((k, v) -> v.release(tid));
     }
 
-    public Set<PageId> getTransactionPages(TransactionId tid) {
+    public synchronized Set<PageId> getTransactionPages(TransactionId tid) {
         return getLocks().entrySet().stream()
                 .filter(e -> e.getValue().hasLock(tid))
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toCollection(ConcurrentHashMap::newKeySet));
     }
 
-    public boolean wouldDeadlock(TransactionId tid, PageId pid, Permissions permissions) {
+    public synchronized boolean wouldDeadlock(TransactionId tid, PageId pid, Permissions permissions) {
         // Adapted from: https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
         Map<TransactionId, Boolean> visited = new ConcurrentHashMap<>();
         Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
 
         LockSet lockSet = locks.getOrDefault(pid, new LockSet());
-        lockSet.acquire(tid, permissions);
-
-        Set<TransactionId> iterate = ConcurrentHashMap.newKeySet();
-
-        for (TransactionId t : lockSet.holders) {
-            if (!t.equals(tid)) {
-                iterate.add(t);
-            }
+        if (!lockSet.acquire(tid, permissions)) {
+            return false;
         }
 
+        Set<TransactionId> iterate = ConcurrentHashMap.newKeySet();
+        iterate.addAll(lockSet.holders);
+        iterate.remove(tid); // Prevents self-cycle detection
+
         for (TransactionId transactionId : iterate) {
-            if (deadlockHelper(transactionId, visited, recursion)) {
+            if (deadlockHelper(transactionId, pid, visited, recursion)) {
                 locks.get(pid).release(tid);
                 return true;
             }
@@ -56,7 +54,7 @@ public class LockManager {
         return false;
     }
 
-    private boolean deadlockHelper(TransactionId tid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+    private synchronized boolean deadlockHelper(TransactionId tid, PageId pid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
         if (rec.getOrDefault(tid, false)) {
             return true;
         }
@@ -70,7 +68,7 @@ public class LockManager {
 
         for (PageId p : getTransactionPages(tid)) {
             for (TransactionId transactionId : locks.getOrDefault(p, new LockSet()).holders) {
-                if (deadlockHelper(transactionId, vis, rec)) {
+                if (deadlockHelper(transactionId, pid, vis, rec)) {
                     return true;
                 }
             }
@@ -120,11 +118,11 @@ public class LockManager {
             return holders.remove(tid);
         }
 
-        public boolean hasLock(TransactionId tid) {
+        public synchronized boolean hasLock(TransactionId tid) {
            return holders.contains(tid);
         }
 
-        public boolean notHeld() {
+        public synchronized boolean notHeld() {
             return holders.isEmpty();
         }
     }
