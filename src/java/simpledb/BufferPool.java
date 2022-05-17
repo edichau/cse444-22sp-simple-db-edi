@@ -33,7 +33,7 @@ public class BufferPool {
     private final LockManager lockManager;
 
     // Dependency graph for cycle detection
-    private final Map<TransactionId, Set<TransactionId>> deps;
+    private final Map<WaitFor, Set<WaitFor>> deps;
 
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
@@ -84,28 +84,38 @@ public class BufferPool {
     public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
 
+        WaitFor waitFor = new WaitFor(tid, pid);
         LockManager.LockSet lockSet = getHolders().getOrDefault(pid, new LockManager.LockSet());
-        Set<TransactionId> holders = deps.getOrDefault(tid, ConcurrentHashMap.newKeySet());
-        holders.addAll(lockSet.holders);
+        Set<WaitFor> holders = deps.getOrDefault(waitFor, ConcurrentHashMap.newKeySet());
 
-        deps.put(tid, holders);
+        lockSet.holders.stream().filter(t -> !t.equals(tid)).map(t -> new WaitFor(t, pid)).forEach(holders::add);
+        deps.put(waitFor, holders);
+
+        for (Map.Entry<WaitFor, Set<WaitFor>> waiting : deps.entrySet()) {
+           if (waiting.getKey().pid.equals(pid) && !waiting.getKey().tid.equals(tid)) {
+               Set<WaitFor> add = waiting.getValue();
+               add.add(waitFor);
+               deps.put(waiting.getKey(), add);
+           }
+        }
 
         // Waits until it can acquire the page before proceeding
         getHolders().putIfAbsent(pid, new LockManager.LockSet());
         while (!getHolders().get(pid).acquire(tid, perm)) {
             try {
                 // Cycle detection similar to https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
-                if (cyclic(deps)) {
-                    deps.remove(tid);
+                if (cyclic()) {
                     throw new TransactionAbortedException();
                 }
+
                 wait();
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
         }
 
-        deps.remove(tid);
+        deps.remove(waitFor);
+        deps.forEach((k, v) -> v.remove(waitFor));
 
         // If buffer does not have page get it using the HeapFile
         if (!buffer.containsKey(pid)) {
@@ -118,12 +128,12 @@ public class BufferPool {
         return buffer.get(pid);
     }
 
-    private synchronized boolean cyclic(Map<TransactionId, Set<TransactionId>> deps) {
+    private synchronized boolean cyclic() {
         Map<TransactionId, Boolean> visited = new ConcurrentHashMap<>();
         Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
 
-        for (TransactionId transactionId : deps.keySet()) {
-            if (dfs(transactionId, visited, recursion)) {
+        for (WaitFor waiting : deps.keySet()) {
+            if (dfs(waiting, visited, recursion)) {
                 return true;
             }
         }
@@ -131,7 +141,9 @@ public class BufferPool {
         return false;
     }
 
-    private synchronized boolean dfs(TransactionId tid, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+    private synchronized boolean dfs(WaitFor waiting, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+        TransactionId tid = waiting.tid;
+
         if (rec.getOrDefault(tid, false)) {
             return true;
         }
@@ -143,13 +155,11 @@ public class BufferPool {
         vis.put(tid, true);
         rec.put(tid, true);
 
-        for (TransactionId t : deps.getOrDefault(tid, ConcurrentHashMap.newKeySet())) {
-            if (dfs(t, vis, rec)) {
+        for (WaitFor w : deps.getOrDefault(waiting, ConcurrentHashMap.newKeySet())) {
+            if (dfs(w, vis, rec)) {
                 return true;
             }
         }
-
-        rec.put(tid, false);
 
         return false;
     }
@@ -164,6 +174,15 @@ public class BufferPool {
      * @param pid the ID of the page to unlock
      */
     public synchronized void releasePage(TransactionId tid, PageId pid) {
+        WaitFor waitFor = new WaitFor(tid, pid);
+
+        // Remove this tid/page combo
+        deps.remove(waitFor);
+
+        // Other transactions are no-longer depending on its completion
+        deps.forEach((k, v) -> v.remove(waitFor));
+
+        // Release all the locks
         getHolders().getOrDefault(pid, new LockManager.LockSet()).release(tid);
         notifyAll();
     }
@@ -206,9 +225,21 @@ public class BufferPool {
                 buffer.put(pid, page);
             }
         }
+
+        // Remove all the dependencies with this tid
+        deps.forEach((k, v) -> {
+            if (k.tid.equals(tid)) {
+                deps.remove(k);
+            }
+        });
+
+        // Remove this transaction and all its page combos from every dependency
+        for (PageId page : lockManager.getTransactionPages(tid)) {
+            deps.forEach((k, v) -> v.remove(new WaitFor(tid, page)));
+        }
+
+        // Cleanup the locks
         lockManager.clearTransaction(tid);
-        deps.remove(tid);
-        deps.forEach((k, v) -> v.remove(tid));
         notifyAll();
     }
 
@@ -325,6 +356,39 @@ public class BufferPool {
             buffer.remove(pageId);
         } catch (IOException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private static class WaitFor {
+        TransactionId tid;
+        PageId pid;
+
+        public WaitFor(TransactionId tid, PageId pid) {
+            this.tid = tid;
+            this.pid = pid;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof WaitFor)) return false;
+
+            WaitFor waitFor = (WaitFor) o;
+
+            if (!tid.equals(waitFor.tid)) return false;
+            return pid.equals(waitFor.pid);
+        }
+
+        @Override
+        public String toString() {
+            return String.format("WaitFor{tid=%s, pid=%s}", tid.myid, pid.getPageNumber());
+        }
+
+        @Override
+        public int hashCode() {
+            int result = tid.hashCode();
+            result = 31 * result + pid.hashCode();
+            return result;
         }
     }
 
