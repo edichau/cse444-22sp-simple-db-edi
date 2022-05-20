@@ -4,6 +4,7 @@ package simpledb;
 import java.io.*;
 import java.util.*;
 import java.lang.reflect.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
 LogFile implements the recovery subsystem of SimpleDb.  This class is
@@ -478,6 +479,9 @@ public class LogFile {
 
                 raf.readLong(); // Start offset of this log [ignore]
 
+                // Make sure we don't undo a later change to a page that is already undone
+                Set<PageId> undone = ConcurrentHashMap.newKeySet();
+
                 for (;;) { // Read through entire log file
                     try {
                        if (raf.readInt() != UPDATE_RECORD) { // Only handle update records
@@ -494,12 +498,15 @@ public class LogFile {
                     Page before = readPageData(raf);
                     readPageData(raf); // After page [ignore]
 
-                    // Write old page back to disk
-                    HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(before.getId().getTableId());
-                    databaseFile.writePage(before);
+                    if (!undone.contains(before.getId())) {
+                        // Write old page back to disk
+                        HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(before.getId().getTableId());
+                        databaseFile.writePage(before);
 
-                    // Clear from buffer pool
-                    Database.getBufferPool().discardPage(before.getId());
+                        // Clear from buffer pool
+                        Database.getBufferPool().discardPage(before.getId());
+                        undone.add(before.getId());
+                    }
 
                     raf.readLong(); // Start location [ignore]
                 }
@@ -529,7 +536,100 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized (this) {
                 recoveryUndecided = false;
-                // some code goes here
+                raf.seek(0);
+
+                // If there is a checkpoint move right after it
+                long ckpt = raf.readLong();
+                if (ckpt != NO_CHECKPOINT_ID) {
+                    raf.seek(ckpt);
+                    int i = raf.readInt();
+                    raf.seek(ckpt + INT_SIZE + (long) i * LONG_SIZE);
+                }
+
+                // Keep track of the loser transactions
+                Set<Long> losers = ConcurrentHashMap.newKeySet();
+
+                for (;;) {
+                    try {
+                        int type = raf.readInt();
+
+                        // A loser if uncommitted
+                        if (type == COMMIT_RECORD) {
+                            losers.remove(raf.readLong());
+                        } else if (type == UPDATE_RECORD) {
+                            losers.add(raf.readLong());
+                        } else {
+                            continue;
+                        }
+                    } catch (EOFException e) {
+                        break;
+                    }
+
+                    Page after; // Page to redo
+                    try {
+                        readPageData(raf); // Before page [ignore]
+                        after = readPageData(raf);
+                    } catch (IOException e) {
+                        continue; // Something wrong with page
+                    }
+
+                    // Write new page to disk
+                    HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(after.getId().getTableId());
+                    databaseFile.writePage(after);
+
+                    // Clear from buffer pool
+                    Database.getBufferPool().discardPage(after.getId());
+
+                    raf.readLong(); // Start location [ignore]
+                }
+
+                // Goto end of the file
+                raf.seek(raf.length());
+
+                Set<PageId> overwritten = ConcurrentHashMap.newKeySet();
+
+                long lastCycle = raf.getFilePointer() - INT_SIZE;
+
+                if (losers.isEmpty()) {
+                    return; // No need to undo if everything is committed
+                }
+
+                // Find the start of the oldest in-progress transaction
+                long first = Collections.min(losers);
+                long start = tidToFirstLogRecord.getOrDefault(first, (long) LONG_SIZE);
+
+                while (lastCycle >= start) {
+                    raf.seek(lastCycle);
+
+                    if (raf.readInt() == UPDATE_RECORD) {
+                        lastCycle = raf.getFilePointer();
+                        boolean uncommitted = losers.contains(raf.readLong());
+
+                        Page before; // Page to redo
+                        try {
+                            before = readPageData(raf);
+                            readPageData(raf); // After page [ignore]
+                        } catch (IOException e) {
+                            continue; // Something wrong with page
+                        }
+
+                        boolean pageCommitted = overwritten.contains(before.getId());
+
+                        if (uncommitted && !pageCommitted) {
+                            // Write old page back to disk
+                            HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(before.getId().getTableId());
+                            databaseFile.writePage(before);
+
+                            // Clear from buffer pool
+                            Database.getBufferPool().discardPage(before.getId());
+                        } else if (!uncommitted) {
+                            overwritten.add(before.getId());
+                        }
+
+                        raf.readLong(); // Start location [ignore]
+                    }
+                    lastCycle -= INT_SIZE + 1;
+                }
             }
          }
     }
