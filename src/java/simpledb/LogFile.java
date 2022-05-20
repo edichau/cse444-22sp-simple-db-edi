@@ -582,7 +582,7 @@ public class LogFile {
                 // Goto end of the file
                 raf.seek(raf.length());
 
-                Set<Page> overwritten = ConcurrentHashMap.newKeySet();
+                Set<PageId> overwritten = ConcurrentHashMap.newKeySet();
 
                 long lastCycle = raf.getFilePointer() - INT_SIZE;
 
@@ -604,7 +604,7 @@ public class LogFile {
                         Page before = readPageData(raf);
                         readPageData(raf); // After page [ignore]
 
-                        boolean pageCommitted = overwritten.contains(before);
+                        boolean pageCommitted = overwritten.contains(before.getId());
 
                         if (uncommitted && !pageCommitted) {
                             // Write old page back to disk
@@ -614,7 +614,7 @@ public class LogFile {
                             // Clear from buffer pool
                             Database.getBufferPool().discardPage(before.getId());
                         } else if (!uncommitted) {
-                            overwritten.add(before);
+                            overwritten.add(before.getId());
                         }
 
                         raf.readLong(); // Start location [ignore]
