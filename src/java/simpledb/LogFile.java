@@ -482,13 +482,9 @@ public class LogFile {
                 // Make sure we don't undo a later change to a page that is already undone
                 Set<PageId> undone = ConcurrentHashMap.newKeySet();
 
-                for (;;) { // Read through entire log file
-                    try {
-                       if (raf.readInt() != UPDATE_RECORD) { // Only handle update records
-                           continue;
-                       }
-                    } catch (EOFException e) {
-                        break;
+                while (raf.getFilePointer() < raf.length()) { // Read through entire log file
+                    if (raf.readInt() != UPDATE_RECORD) { // Only handle update records
+                        continue;
                     }
 
                     if (raf.readLong() != tid.getId()) { // Read tid and make sure it matches
@@ -549,21 +545,17 @@ public class LogFile {
                 // Keep track of the loser transactions
                 Set<Long> losers = ConcurrentHashMap.newKeySet();
 
-                for (;;) {
-                    try {
-                        int type = raf.readInt();
+                while (raf.getFilePointer() < raf.length()) {
+                    int type = raf.readInt();
 
-                        // A loser if uncommitted
-                        if (type == COMMIT_RECORD) {
-                            losers.remove(raf.readLong());
-                            continue;
-                        } else if (type == UPDATE_RECORD) {
-                            losers.add(raf.readLong());
-                        } else {
-                            continue;
-                        }
-                    } catch (EOFException e) {
-                        break;
+                    // A loser if uncommitted
+                    if (type == COMMIT_RECORD) {
+                        losers.remove(raf.readLong());
+                        continue;
+                    } else if (type == UPDATE_RECORD) {
+                        losers.add(raf.readLong());
+                    } else {
+                        continue;
                     }
 
                     readPageData(raf); // Before page [ignore]
@@ -622,7 +614,7 @@ public class LogFile {
                     lastCycle -= INT_SIZE + 1;
                 }
             }
-         }
+        }
     }
 
     /** Print out a human readable represenation of the log */
