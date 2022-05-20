@@ -2,9 +2,9 @@ package simpledb;
 
 import java.io.*;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -32,6 +32,9 @@ public class BufferPool {
     // Manager for the page locks by transactions
     private final LockManager lockManager;
 
+    // Dependency graph for cycle detection
+    private final Map<WaitFor, Set<WaitFor>> deps;
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -46,6 +49,7 @@ public class BufferPool {
         buffer = new ConcurrentHashMap<>();
         maxCapacity = numPages;
         lockManager = new LockManager();
+        deps = new ConcurrentHashMap<>();
     }
     
     public static int getPageSize() {
@@ -80,15 +84,38 @@ public class BufferPool {
     public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
 
+        WaitFor waitFor = new WaitFor(tid, pid);
+        LockManager.LockSet lockSet = getHolders().getOrDefault(pid, new LockManager.LockSet());
+        Set<WaitFor> holders = deps.getOrDefault(waitFor, ConcurrentHashMap.newKeySet());
+
+        lockSet.holders.stream().filter(t -> !t.equals(tid)).map(t -> new WaitFor(t, pid)).forEach(holders::add);
+        deps.put(waitFor, holders);
+
+        for (Map.Entry<WaitFor, Set<WaitFor>> waiting : deps.entrySet()) {
+           if (waiting.getKey().pid.equals(pid) && !waiting.getKey().tid.equals(tid)) {
+               Set<WaitFor> add = waiting.getValue();
+               add.add(waitFor);
+               deps.put(waiting.getKey(), add);
+           }
+        }
+
         // Waits until it can acquire the page before proceeding
         getHolders().putIfAbsent(pid, new LockManager.LockSet());
         while (!getHolders().get(pid).acquire(tid, perm)) {
             try {
+                // Cycle detection similar to https://www.geeksforgeeks.org/detect-cycle-in-a-graph/
+                if (cyclic()) {
+                    throw new TransactionAbortedException();
+                }
+
                 wait();
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
         }
+
+        deps.remove(waitFor);
+        deps.forEach((k, v) -> v.remove(waitFor));
 
         // If buffer does not have page get it using the HeapFile
         if (!buffer.containsKey(pid)) {
@@ -101,6 +128,42 @@ public class BufferPool {
         return buffer.get(pid);
     }
 
+    private synchronized boolean cyclic() {
+        Map<TransactionId, Boolean> visited = new ConcurrentHashMap<>();
+        Map<TransactionId, Boolean> recursion = new ConcurrentHashMap<>();
+
+        for (WaitFor waiting : deps.keySet()) {
+            if (dfs(waiting, visited, recursion)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private synchronized boolean dfs(WaitFor waiting, Map<TransactionId, Boolean> vis, Map<TransactionId, Boolean> rec) {
+        TransactionId tid = waiting.tid;
+
+        if (rec.getOrDefault(tid, false)) {
+            return true;
+        }
+
+        if (vis.getOrDefault(tid, false)) {
+            return false;
+        }
+
+        vis.put(tid, true);
+        rec.put(tid, true);
+
+        for (WaitFor w : deps.getOrDefault(waiting, ConcurrentHashMap.newKeySet())) {
+            if (dfs(w, vis, rec)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * Releases the lock on a page.
      * Calling this is very risky, and may result in wrong behavior. Think hard
@@ -111,6 +174,15 @@ public class BufferPool {
      * @param pid the ID of the page to unlock
      */
     public synchronized void releasePage(TransactionId tid, PageId pid) {
+        WaitFor waitFor = new WaitFor(tid, pid);
+
+        // Remove this tid/page combo
+        deps.remove(waitFor);
+
+        // Other transactions are no-longer depending on its completion
+        deps.forEach((k, v) -> v.remove(waitFor));
+
+        // Release all the locks
         getHolders().getOrDefault(pid, new LockManager.LockSet()).release(tid);
         notifyAll();
     }
@@ -121,11 +193,10 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      */
     public synchronized void transactionComplete(TransactionId tid) throws IOException {
-        lockManager.clearTransaction(tid);
-        notifyAll();
+        transactionComplete(tid, true);
     }
 
-    private Map<PageId, LockManager.LockSet> getHolders() {
+    private synchronized Map<PageId, LockManager.LockSet> getHolders() {
         return lockManager.getLocks();
     }
 
@@ -143,7 +214,31 @@ public class BufferPool {
      */
     public synchronized void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        // TODO: Handle abort/commit
+        if (commit){
+            flushPages(tid);
+        } else {
+            for (PageId pid : lockManager.getTransactionPages(tid)) {
+                HeapPage page = (HeapPage) Database.getCatalog()
+                        .getDatabaseFile(pid.getTableId())
+                        .readPage(pid);
+                page.markDirty(false, tid);
+                buffer.put(pid, page);
+            }
+        }
+
+        // Remove all the dependencies with this tid
+        deps.forEach((k, v) -> {
+            if (k.tid.equals(tid)) {
+                deps.remove(k);
+            }
+        });
+
+        // Remove this transaction and all its page combos from every dependency
+        for (PageId page : lockManager.getTransactionPages(tid)) {
+            deps.forEach((k, v) -> v.remove(new WaitFor(tid, page)));
+        }
+
+        // Cleanup the locks
         lockManager.clearTransaction(tid);
         notifyAll();
     }
@@ -163,7 +258,7 @@ public class BufferPool {
      * @param tableId the table to add the tuple to
      * @param t the tuple to add
      */
-    public void insertTuple(TransactionId tid, int tableId, Tuple t)
+    public synchronized void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         List<Page> dirtyPages = dbFile.insertTuple(tid, t);
@@ -186,7 +281,7 @@ public class BufferPool {
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
      */
-    public  void deleteTuple(TransactionId tid, Tuple t)
+    public synchronized void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         int tableId = t.getRecordId().getPageId().getTableId();
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
@@ -226,7 +321,7 @@ public class BufferPool {
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
         HeapPage page = (HeapPage) buffer.get(pid);
-        if (page.dirty) {
+        if (page != null && page.dirty) {
             Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
             page.markDirty(false, null);
         }
@@ -235,8 +330,9 @@ public class BufferPool {
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized  void flushPages(TransactionId tid) throws IOException {
-        // some code goes here
-        // not necessary for lab1|lab2
+        for (PageId pageId : lockManager.getTransactionPages(tid)) {
+            flushPage(pageId);
+        }
     }
 
     /**
@@ -244,13 +340,55 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized  void evictPage() throws DbException {
-        // Get the first page in the buffer pool and remove it
-        PageId pageId = buffer.keySet().stream().findFirst().orElse(null);
+        // Exception if there are no clean pages in the buffer pool
+        Supplier<DbException> exception = () -> new DbException("No clean pages to evict");
+
+        // Get the first clean page in the buffer pool
+        PageId pageId = buffer.entrySet().stream()
+                .filter(e -> !((HeapPage) e.getValue()).dirty)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(exception);
+
+        // Attempt to remove the found page from the buffer pool
         try {
             flushPage(pageId);
             buffer.remove(pageId);
         } catch (IOException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private static class WaitFor {
+        TransactionId tid;
+        PageId pid;
+
+        public WaitFor(TransactionId tid, PageId pid) {
+            this.tid = tid;
+            this.pid = pid;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof WaitFor)) return false;
+
+            WaitFor waitFor = (WaitFor) o;
+
+            if (!tid.equals(waitFor.tid)) return false;
+            return pid.equals(waitFor.pid);
+        }
+
+        @Override
+        public String toString() {
+            return String.format("WaitFor{tid=%s, pid=%s}", tid.myid, pid.getPageNumber());
+        }
+
+        @Override
+        public int hashCode() {
+            int result = tid.hashCode();
+            result = 31 * result + pid.hashCode();
+            return result;
         }
     }
 
