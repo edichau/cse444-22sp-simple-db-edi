@@ -15,13 +15,9 @@ import java.util.*;
  */
 public class HeapFile implements DbFile {
 
-    private final File file;
-    private final TupleDesc td;
+    private File file;
+    private TupleDesc td;
     private final int id;
-
-    // Fields for iterator to keep track of tuple
-    private Iterator<Tuple> itr;
-    private int pid;
 
     /**
      * Constructs a heap file backed by the specified file.
@@ -169,6 +165,9 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public DbFileIterator iterator(TransactionId tid) {
         return new DbFileIterator() {
+            private int pid;
+            private Iterator<Tuple> itr;
+
             @Override
             public void open() throws DbException, TransactionAbortedException {
                 pid = 0;
