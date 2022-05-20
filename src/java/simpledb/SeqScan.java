@@ -13,9 +13,10 @@ public class SeqScan implements OpIterator {
 
     private static final long serialVersionUID = 1L;
 
-    private final TransactionId tid;
+    private TransactionId tid;
     private int tableid;
     private String tableAlias;
+    private DbFileIterator itr;
 
     /**
      * Creates a sequential scan over the specified table as a part of the
@@ -35,8 +36,7 @@ public class SeqScan implements OpIterator {
      */
     public SeqScan(TransactionId tid, int tableid, String tableAlias) {
         this.tid = tid;
-        this.tableid = tableid;
-        this.tableAlias = tableAlias;
+        reset(tableid, tableAlias);
     }
 
     /**
@@ -77,7 +77,8 @@ public class SeqScan implements OpIterator {
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        Database.getCatalog().getDatabaseFile(tableid).iterator(tid).open();
+        itr = Database.getCatalog().getDatabaseFile(tableid).iterator(tid);
+        itr.open();
     }
 
     /**
@@ -108,20 +109,20 @@ public class SeqScan implements OpIterator {
     }
 
     public boolean hasNext() throws TransactionAbortedException, DbException {
-        return Database.getCatalog().getDatabaseFile(tableid).iterator(tid).hasNext();
+        return itr.hasNext();
     }
 
     public Tuple next() throws NoSuchElementException,
             TransactionAbortedException, DbException {
-        return Database.getCatalog().getDatabaseFile(tableid).iterator(tid).next();
+        return itr.next();
     }
 
     public void close() {
-        Database.getCatalog().getDatabaseFile(tableid).iterator(tid).close();
+        itr.close();
     }
 
     public void rewind() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        Database.getCatalog().getDatabaseFile(tableid).iterator(tid).rewind();
+        itr.rewind();
     }
 }
