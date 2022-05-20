@@ -556,6 +556,7 @@ public class LogFile {
                         // A loser if uncommitted
                         if (type == COMMIT_RECORD) {
                             losers.remove(raf.readLong());
+                            continue;
                         } else if (type == UPDATE_RECORD) {
                             losers.add(raf.readLong());
                         } else {
@@ -565,13 +566,8 @@ public class LogFile {
                         break;
                     }
 
-                    Page after; // Page to redo
-                    try {
-                        readPageData(raf); // Before page [ignore]
-                        after = readPageData(raf);
-                    } catch (IOException e) {
-                        continue; // Something wrong with page
-                    }
+                    readPageData(raf); // Before page [ignore]
+                    Page after = readPageData(raf);
 
                     // Write new page to disk
                     HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(after.getId().getTableId());
@@ -586,7 +582,7 @@ public class LogFile {
                 // Goto end of the file
                 raf.seek(raf.length());
 
-                Set<PageId> overwritten = ConcurrentHashMap.newKeySet();
+                Set<Page> overwritten = ConcurrentHashMap.newKeySet();
 
                 long lastCycle = raf.getFilePointer() - INT_SIZE;
 
@@ -605,15 +601,10 @@ public class LogFile {
                         lastCycle = raf.getFilePointer();
                         boolean uncommitted = losers.contains(raf.readLong());
 
-                        Page before; // Page to redo
-                        try {
-                            before = readPageData(raf);
-                            readPageData(raf); // After page [ignore]
-                        } catch (IOException e) {
-                            continue; // Something wrong with page
-                        }
+                        Page before = readPageData(raf);
+                        readPageData(raf); // After page [ignore]
 
-                        boolean pageCommitted = overwritten.contains(before.getId());
+                        boolean pageCommitted = overwritten.contains(before);
 
                         if (uncommitted && !pageCommitted) {
                             // Write old page back to disk
@@ -623,7 +614,7 @@ public class LogFile {
                             // Clear from buffer pool
                             Database.getBufferPool().discardPage(before.getId());
                         } else if (!uncommitted) {
-                            overwritten.add(before.getId());
+                            overwritten.add(before);
                         }
 
                         raf.readLong(); // Start location [ignore]
