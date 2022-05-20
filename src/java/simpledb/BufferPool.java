@@ -35,6 +35,8 @@ public class BufferPool {
     // Dependency graph for cycle detection
     private final Map<WaitFor, Set<WaitFor>> deps;
 
+    private final Set<TransactionId> inProgress;
+
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
@@ -47,9 +49,10 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         buffer = new ConcurrentHashMap<>();
-        maxCapacity = numPages;
         lockManager = new LockManager();
         deps = new ConcurrentHashMap<>();
+        inProgress = ConcurrentHashMap.newKeySet();
+        maxCapacity = numPages;
     }
     
     public static int getPageSize() {
@@ -83,6 +86,8 @@ public class BufferPool {
      */
     public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
+
+        inProgress.add(tid);
 
         WaitFor waitFor = new WaitFor(tid, pid);
         LockManager.LockSet lockSet = getHolders().getOrDefault(pid, new LockManager.LockSet());
@@ -214,8 +219,20 @@ public class BufferPool {
      */
     public synchronized void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        if (commit){
-            flushPages(tid);
+        if (commit) {
+            Set<PageId> transactionPages = lockManager.getTransactionPages(tid);
+
+            for (PageId entry : transactionPages) {
+                Page page = buffer.get(entry);
+                TransactionId dirty = page.isDirty();
+
+                if (dirty != null) {
+                    Database.getLogFile().logWrite(dirty, page.getBeforeImage(), page);
+                    Database.getLogFile().force();
+                }
+
+                page.setBeforeImage();
+            }
         } else {
             for (PageId pid : lockManager.getTransactionPages(tid)) {
                 HeapPage page = (HeapPage) Database.getCatalog()
@@ -240,6 +257,7 @@ public class BufferPool {
 
         // Cleanup the locks
         lockManager.clearTransaction(tid);
+        inProgress.remove(tid);
         notifyAll();
     }
 
@@ -321,7 +339,14 @@ public class BufferPool {
      */
     private synchronized  void flushPage(PageId pid) throws IOException {
         HeapPage page = (HeapPage) buffer.get(pid);
-        if (page != null && page.dirty) {
+        TransactionId dirtier = page.isDirty();
+
+        if (page.dirty) {
+            if (dirtier != null && inProgress.contains(dirtier)) {
+                Database.getLogFile().logWrite(dirtier, page.getBeforeImage(), page);
+                Database.getLogFile().force();
+            }
+
             Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
             page.markDirty(false, null);
         }
@@ -344,9 +369,7 @@ public class BufferPool {
         Supplier<DbException> exception = () -> new DbException("No clean pages to evict");
 
         // Get the first clean page in the buffer pool
-        PageId pageId = buffer.entrySet().stream()
-                .filter(e -> !((HeapPage) e.getValue()).dirty)
-                .map(Map.Entry::getKey)
+        PageId pageId = buffer.keySet().stream()
                 .findFirst()
                 .orElseThrow(exception);
 
