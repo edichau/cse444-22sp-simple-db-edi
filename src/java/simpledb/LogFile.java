@@ -466,7 +466,43 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized(this) {
                 preAppend();
-                // some code goes here
+
+                // Goto the starting position
+                Long tidOff = tidToFirstLogRecord.get(tid.getId());
+
+                raf.seek(tidOff); // Jump to offset
+
+                if (raf.readInt() != BEGIN_RECORD || raf.readLong() != tid.getId()) {
+                    return;
+                }
+
+                raf.readLong(); // Start offset of this log [ignore]
+
+                for (;;) { // Read through entire log file
+                    try {
+                       if (raf.readInt() != UPDATE_RECORD) { // Only handle update records
+                           continue;
+                       }
+                    } catch (EOFException e) {
+                        break;
+                    }
+
+                    if (raf.readLong() != tid.getId()) { // Read tid and make sure it matches
+                        continue;
+                    }
+
+                    Page before = readPageData(raf);
+                    readPageData(raf); // After page [ignore]
+
+                    // Write old page back to disk
+                    HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(before.getId().getTableId());
+                    databaseFile.writePage(before);
+
+                    // Clear from buffer pool
+                    Database.getBufferPool().discardPage(before.getId());
+
+                    raf.readLong(); // Start location [ignore]
+                }
             }
         }
     }
