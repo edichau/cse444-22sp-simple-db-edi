@@ -533,90 +533,91 @@ public class LogFile {
             synchronized (this) {
                 recoveryUndecided = false;
                 raf.seek(0);
-
-                // If there is a checkpoint move right after it
-                long ckpt = raf.readLong();
-                if (ckpt != NO_CHECKPOINT_ID) {
-                    raf.seek(ckpt);
-                    int i = raf.readInt();
-                    raf.seek(ckpt + INT_SIZE + (long) i * LONG_SIZE);
+                // get last checkpoint
+                long checkpointOffset = raf.readLong();
+                if (checkpointOffset != NO_CHECKPOINT_ID) {
+                    raf.seek(checkpointOffset);
                 }
 
-                // Keep track of the loser transactions
-                Set<Long> losers = ConcurrentHashMap.newKeySet();
+                Set<Long> committedTransactionsAfterCheckpoint = new HashSet<>();
 
-                while (raf.getFilePointer() < raf.length()) {
-                    int type = raf.readInt();
-
-                    // A loser if uncommitted
-                    if (type == COMMIT_RECORD) {
-                        losers.remove(raf.readLong());
-                        continue;
-                    } else if (type == UPDATE_RECORD) {
-                        losers.add(raf.readLong());
-                    } else {
-                        continue;
-                    }
-
-                    readPageData(raf); // Before page [ignore]
-                    Page after = readPageData(raf);
-
-                    // Write new page to disk
-                    HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(after.getId().getTableId());
-                    databaseFile.writePage(after);
-
-                    // Clear from buffer pool
-                    Database.getBufferPool().discardPage(after.getId());
-
-                    raf.readLong(); // Start location [ignore]
-                }
-
-                // Goto end of the file
-                raf.seek(raf.length());
-
-                Set<PageId> overwritten = ConcurrentHashMap.newKeySet();
-
-                long lastCycle = raf.getFilePointer() - INT_SIZE;
-
-                if (losers.isEmpty()) {
-                    return; // No need to undo if everything is committed
-                }
-
-                // Find the start of the oldest in-progress transaction
-                long first = Collections.min(losers);
-                long start = tidToFirstLogRecord.getOrDefault(first, (long) LONG_SIZE);
-
-                while (lastCycle >= start) {
-                    raf.seek(lastCycle);
-
-                    if (raf.readInt() == UPDATE_RECORD) {
-                        lastCycle = raf.getFilePointer();
-                        boolean uncommitted = losers.contains(raf.readLong());
-
-                        Page before = readPageData(raf);
-                        readPageData(raf); // After page [ignore]
-
-                        boolean pageCommitted = overwritten.contains(before.getId());
-
-                        if (uncommitted && !pageCommitted) {
-                            // Write old page back to disk
-                            HeapFile databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(before.getId().getTableId());
-                            databaseFile.writePage(before);
-
-                            // Clear from buffer pool
-                            Database.getBufferPool().discardPage(before.getId());
-                        } else if (!uncommitted) {
-                            overwritten.add(before.getId());
+                //find all committed transactions
+                while (true) {
+                    try {
+                        int logRecordType = raf.readInt();
+                        if (logRecordType ==  BEGIN_RECORD ) {
+                            long transactionId = raf.readLong();
+                            long recordOffset = raf.readLong();
+                            this.tidToFirstLogRecord.put(transactionId, recordOffset);
+                        } else if (logRecordType == COMMIT_RECORD) {
+                            long transactionId = raf.readLong();
+                            raf.readLong();
+                            committedTransactionsAfterCheckpoint.add(transactionId);
+                        } else if (logRecordType == UPDATE_RECORD) {
+                            raf.readLong();
+                            readPageData(raf);
+                            readPageData(raf);
+                            raf.readLong();
+                        } else if (logRecordType == ABORT_RECORD) {
+                            raf.skipBytes(LONG_SIZE*2);
+                        } else if (logRecordType == CHECKPOINT_RECORD) {
+                            raf.readLong();
+                            long numActiveTransactions = raf.readInt();
+                            for (int i = 0; i < numActiveTransactions; i++) {
+                                long activeTxnId = raf.readLong();
+                                long activeTxnOffset = raf.readLong();
+                                tidToFirstLogRecord.put(activeTxnId, activeTxnOffset);
+                            }
+                            //skip offset for this record
+                            raf.skipBytes(LONG_SIZE);
+                        } else {
+                            throw new RuntimeException("Not supported in recovery");
                         }
 
-                        raf.readLong(); // Start location [ignore]
+                    } catch (EOFException e) {
+                        break;
                     }
-                    lastCycle -= INT_SIZE + 1;
                 }
+
+                for (Long transactionId: tidToFirstLogRecord.keySet()) {
+                    long beginOffset = tidToFirstLogRecord.get(transactionId);
+                    if (committedTransactionsAfterCheckpoint.contains(transactionId)) {
+                        handleUpdatesForTransaction(beginOffset, transactionId, true);
+                    } else {
+                        handleUpdatesForTransaction(beginOffset, transactionId, false);
+                    }
+                }
+                tidToFirstLogRecord.clear();
             }
         }
     }
 
+    private void handleUpdatesForTransaction(long beginOffset, long transactionId, boolean commited) throws IOException {
+        raf.seek(beginOffset);
+        while (true) {
+            try {
+                int logRecordType = raf.readInt();
+                if (logRecordType ==  UPDATE_RECORD ) {
+                    long recordTxId = raf.readLong();
+                    Page beforePage = readPageData(raf);
+                    Page afterPage = readPageData(raf);
+                    raf.readLong();
+                    if (recordTxId == transactionId) {
+                        //apply after page
+                        if (commited) {
+                            Database.getCatalog().getDatabaseFile(beforePage.getId().getTableId()).writePage(afterPage);
+                        } else {
+                            Database.getCatalog().getDatabaseFile(beforePage.getId().getTableId()).writePage(beforePage);
+                        }
+                    }
+                } else {
+                    raf.skipBytes(LONG_SIZE*2);
+                }
+            } catch (EOFException e){
+                break;
+            }
+        }
+    }
     /** Print out a human readable represenation of the log */
     public void print() throws IOException {
         // some code goes here
