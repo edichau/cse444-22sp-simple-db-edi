@@ -1,9 +1,6 @@
 package simpledb;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
-import java.util.stream.IntStream;
 
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */

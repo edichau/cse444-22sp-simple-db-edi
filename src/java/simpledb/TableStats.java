@@ -1,8 +1,6 @@
 package simpledb;
 
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -16,6 +14,9 @@ public class TableStats {
     private static final ConcurrentHashMap<String, TableStats> statsMap = new ConcurrentHashMap<String, TableStats>();
 
     static final int IOCOSTPERPAGE = 1000;
+    private final HeapFile databaseFile;
+    private final int ioCostPerPage;
+    private final Set<Tuple> tuples;
 
     public static TableStats getTableStats(String tablename) {
         return statsMap.get(tablename);
@@ -85,6 +86,19 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        databaseFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableid);
+        DbFileIterator iterator = databaseFile.iterator(new TransactionId());
+        tuples = ConcurrentHashMap.newKeySet();
+        try {
+            iterator.open();
+            while (iterator.hasNext()) {
+               tuples.add(iterator.next());
+            }
+            iterator.close();
+        } catch (DbException | TransactionAbortedException e) {
+            throw new RuntimeException(e);
+        }
+        this.ioCostPerPage = ioCostPerPage;
     }
 
     /**
@@ -100,8 +114,7 @@ public class TableStats {
      * @return The estimated cost of scanning the table.
      */
     public double estimateScanCost() {
-        // some code goes here
-        return 0;
+        return databaseFile.numPages() * ioCostPerPage;
     }
 
     /**
@@ -114,8 +127,7 @@ public class TableStats {
      *         selectivityFactor
      */
     public int estimateTableCardinality(double selectivityFactor) {
-        // some code goes here
-        return 0;
+        return (int) (tuples.size() * selectivityFactor);
     }
 
     /**
@@ -147,16 +159,34 @@ public class TableStats {
      *         predicate
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
-        // some code goes here
-        return 1.0;
+        if (constant.getType().equals(Type.STRING_TYPE)) {
+            StringHistogram hist = new StringHistogram(NUM_HIST_BINS);
+            tuples.stream().map(t -> ((StringField) t.getField(field)).getValue()).forEach(hist::addValue);
+            return hist.estimateSelectivity(op, ((StringField) constant).getValue());
+        } else {
+            int max = Integer.MIN_VALUE;
+            int min = Integer.MAX_VALUE;
+            for (Tuple tuple : tuples) {
+                int value = ((IntField) tuple.getField(field)).getValue();
+                max = Math.max(max, value);
+                min = Math.min(min, value);
+            }
+
+            IntHistogram hist = new IntHistogram(NUM_HIST_BINS, min, max);
+            for (Tuple tuple : tuples) {
+                int value = ((IntField) tuple.getField(field)).getValue();
+                hist.addValue(value);
+            }
+
+            return hist.estimateSelectivity(op, ((IntField) constant).getValue());
+        }
     }
 
     /**
      * return the total number of tuples in this table
      * */
     public int totalTuples() {
-        // some code goes here
-        return 0;
+        return tuples.size();
     }
 
 }
