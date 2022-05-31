@@ -1,0 +1,12 @@
+Feedback for: jpalmer4
+--------------------------------------------------------------
+Total Score (%): 99.5
+Unit Test Score (out of 15): 15
+System Test Score (out of 6): 6
+Code Score (out of 10): 10
+Writeup Score (out of 10): 9.5
+--------------------------------------------------------------
+Code Feedback: Great job!
+
+Writeup Feedback: Great job!
+(-0.5): Should mention locking granularity and deadlock resolution (aborting yourself vs others) in your writeup.
