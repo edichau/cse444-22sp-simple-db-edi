@@ -152,9 +152,27 @@ public class JoinOptimizer {
             boolean t2pkey, Map<String, TableStats> stats,
             Map<String, Integer> tableAliasToId) {
         int card = 1;
-        // some code goes here
-        return t1pkey ? card1 : card2;
-//        return card <= 0 ? 1 : card;
+        int small = Math.min(card1, card2);
+        int big = Math.max(card1, card2);
+        switch (joinOp) {
+            case EQUALS:
+                if (t1pkey && t2pkey) {
+                    card = small;
+                } else if (t1pkey) {
+                    card = card2;
+                } else if (t2pkey) {
+                    card = card1;
+                } else {
+                    card = big;
+                }
+                break;
+            case LESS_THAN_OR_EQ:
+                card = (int) (card1 * card2 * 0.3);
+                break;
+            default:
+                card = card1 * card2;
+        }
+        return card <= 0 ? 1 : card;
     }
 
     /**
