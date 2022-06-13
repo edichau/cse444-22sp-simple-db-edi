@@ -1,0 +1,15 @@
+Feedback for: jpalmer4
+--------------------------------------------------------------
+Total Score (%): 94
+Unit Test Score (out of 32): 16
+System Test Score (out of 4): 0
+Code Score (out of 10): 10
+Writeup Score (out of 10): 9
+--------------------------------------------------------------
+Final Report Score excluding lab5 specifics (out of 10): 10
+--------------------------------------------------------------
+Code Feedback: Great job!
+QueryTest timing out
+
+Writeup Feedback: Great job!
+(-1): Missing query plan for exercise 6
