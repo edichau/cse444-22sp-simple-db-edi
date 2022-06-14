@@ -1,8 +1,8 @@
 Feedback for: jpalmer4
 --------------------------------------------------------------
 Total Score (%): 94
-Unit Test Score (out of 32): 16
-System Test Score (out of 4): 0
+Unit Test Score (out of 16): 16
+System Test Score (out of 1): 0
 Code Score (out of 10): 10
 Writeup Score (out of 10): 9
 --------------------------------------------------------------
